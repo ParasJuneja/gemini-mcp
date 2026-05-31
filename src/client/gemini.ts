@@ -3,6 +3,7 @@ import {
   GenerativeModel,
 } from "@google/generative-ai";
 import { execFileSync } from "child_process";
+import { randomUUID } from "crypto";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -33,7 +34,7 @@ export interface GeminiResponse {
   };
 }
 
-// ─── OAuth types ──────────────────────────────────────────────────────────────
+// ─── OAuth credential types ───────────────────────────────────────────────────
 
 interface OAuthCreds {
   access_token: string;
@@ -49,52 +50,66 @@ interface OAuthClientCreds {
   clientSecret: string;
 }
 
-// Typed shape of generativelanguage.googleapis.com REST response
-interface GeminiRestResponse {
-  candidates?: Array<{
-    content?: { parts?: Array<{ text?: string }>; role?: string };
-    finishReason?: string;
-  }>;
-  usageMetadata?: {
-    promptTokenCount?: number;
-    candidatesTokenCount?: number;
-    totalTokenCount?: number;
+// ─── Code Assist API types ────────────────────────────────────────────────────
+// The Gemini CLI routes through cloudcode-pa.googleapis.com (Code Assist API)
+// rather than generativelanguage.googleapis.com. This endpoint accepts the
+// cloud-platform OAuth scope that the CLI already has.
+
+interface CodeAssistLoadResponse {
+  cloudaicompanionProject?: string;
+  currentTier?: { id?: string; name?: string };
+}
+
+// The nested Vertex-format request sent inside the Code Assist envelope.
+interface VertexGenerateContentRequest {
+  contents: Array<{ role: string; parts: Array<{ text: string }> }>;
+  systemInstruction?: { parts: Array<{ text: string }> };
+  generationConfig: Record<string, unknown>;
+  tools?: Array<Record<string, unknown>>;
+}
+
+// Subset of the Code Assist generateContent response we care about.
+interface CodeAssistGenerateResponse {
+  response?: {
+    candidates?: Array<{
+      content?: { parts?: Array<{ text?: string; thoughtSignature?: string }>; role?: string };
+      finishReason?: string;
+    }>;
+    usageMetadata?: {
+      promptTokenCount?: number;
+      candidatesTokenCount?: number;
+      totalTokenCount?: number;
+    };
   };
   error?: { code?: number; message?: string; status?: string };
 }
 
-const GEMINI_CLI_CREDS_PATH = path.join(os.homedir(), ".gemini", "oauth_creds.json");
-const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta";
+const CODE_ASSIST_BASE = "https://cloudcode-pa.googleapis.com";
+const CODE_ASSIST_VERSION = "v1internal";
 
-// ─── CLI credential extraction ────────────────────────────────────────────────
-// We never hardcode OAuth client credentials in source. Instead we extract them
-// at runtime from the Gemini CLI's own bundle — zero config for the user, no
-// secrets in the repo. The result is cached for the process lifetime.
+const GEMINI_CLI_CREDS_PATH = path.join(os.homedir(), ".gemini", "oauth_creds.json");
+
+// ─── OAuth CLI credential extraction ─────────────────────────────────────────
+// We never hardcode OAuth client credentials. They are extracted at runtime
+// from the Gemini CLI's installed bundle — zero config, no secrets in repo.
 
 let cachedClientCreds: OAuthClientCreds | null | undefined = undefined;
 
 async function resolveCliBundleDir(): Promise<string | null> {
   try {
-    // Use execFileSync with argument arrays — no shell interpolation risk.
-    const geminiPath = execFileSync("which", ["gemini"], {
-      encoding: "utf-8",
-    }).trim();
+    const geminiPath = execFileSync("which", ["gemini"], { encoding: "utf-8" }).trim();
     if (!geminiPath) return null;
 
-    // Resolve one level of symlink (Homebrew shims, nvm wrappers, etc.)
     let resolved = "";
     try {
-      resolved = execFileSync("readlink", [geminiPath], {
-        encoding: "utf-8",
-      }).trim();
+      resolved = execFileSync("readlink", [geminiPath], { encoding: "utf-8" }).trim();
     } catch {
-      // readlink returns non-zero when the path is not a symlink — that's fine.
+      // Not a symlink — that's fine.
     }
     const realBinDir = resolved
       ? path.dirname(path.resolve(path.dirname(geminiPath), resolved))
       : path.dirname(geminiPath);
 
-    // Candidate paths for Homebrew, npm-global, and other package managers
     const candidates = [
       path.join(realBinDir, "..", "libexec", "lib", "node_modules", "@google", "gemini-cli", "bundle"),
       path.join(realBinDir, "..", "..", "lib", "node_modules", "@google", "gemini-cli", "bundle"),
@@ -109,7 +124,7 @@ async function resolveCliBundleDir(): Promise<string | null> {
       }
     }
   } catch {
-    // CLI not on PATH or filesystem error
+    // CLI not on PATH
   }
   return null;
 }
@@ -117,23 +132,15 @@ async function resolveCliBundleDir(): Promise<string | null> {
 async function extractClientCreds(): Promise<OAuthClientCreds | null> {
   const bundleDir = await resolveCliBundleDir();
   if (!bundleDir) return null;
-
   try {
     const files = await fs.promises.readdir(bundleDir);
     for (const file of files) {
       if (!file.endsWith(".js")) continue;
-      const content = await fs.promises.readFile(
-        path.join(bundleDir, file),
-        "utf-8"
-      );
-      const clientIdMatch = content.match(
-        /OAUTH_CLIENT_ID\s*=\s*"([^"]+\.apps\.googleusercontent\.com)"/
-      );
-      const secretMatch = content.match(
-        /OAUTH_CLIENT_SECRET\s*=\s*"(GOCSPX-[^"]+)"/
-      );
-      if (clientIdMatch?.[1] && secretMatch?.[1]) {
-        return { clientId: clientIdMatch[1], clientSecret: secretMatch[1] };
+      const content = await fs.promises.readFile(path.join(bundleDir, file), "utf-8");
+      const idMatch = content.match(/OAUTH_CLIENT_ID\s*=\s*"([^"]+\.apps\.googleusercontent\.com)"/);
+      const secMatch = content.match(/OAUTH_CLIENT_SECRET\s*=\s*"(GOCSPX-[^"]+)"/);
+      if (idMatch?.[1] && secMatch?.[1]) {
+        return { clientId: idMatch[1], clientSecret: secMatch[1] };
       }
     }
   } catch {
@@ -147,14 +154,13 @@ async function getOAuthClientCreds(): Promise<OAuthClientCreds | null> {
   cachedClientCreds = await extractClientCreds();
   if (!cachedClientCreds) {
     logger.warn(
-      "Gemini CLI OAuth client credentials not found in CLI bundle. " +
-        "Token refresh will fail if the access token expires."
+      "Gemini CLI OAuth client credentials not found. Token refresh will fail when the access token expires."
     );
   }
   return cachedClientCreds;
 }
 
-// ─── OAuth helpers ────────────────────────────────────────────────────────────
+// ─── OAuth token helpers ──────────────────────────────────────────────────────
 
 async function readOAuthCreds(): Promise<OAuthCreds | null> {
   try {
@@ -170,7 +176,7 @@ async function refreshOAuthToken(creds: OAuthCreds): Promise<OAuthCreds> {
   const clientCreds = await getOAuthClientCreds();
   if (!clientCreds) {
     throw new Error(
-      "Cannot refresh OAuth token: Gemini CLI credentials not extractable. " +
+      "Cannot refresh OAuth token: Gemini CLI credentials not found in bundle. " +
         "Ensure the `gemini` CLI is installed and in PATH."
     );
   }
@@ -197,12 +203,11 @@ async function refreshOAuthToken(creds: OAuthCreds): Promise<OAuthCreds> {
     scope: (data["scope"] as string) ?? creds.scope,
     token_type: (data["token_type"] as string) ?? "Bearer",
     id_token: (data["id_token"] as string) ?? creds.id_token,
-    expiry_date:
-      Date.now() + ((data["expires_in"] as number) ?? 3600) * 1000,
+    expiry_date: Date.now() + ((data["expires_in"] as number) ?? 3600) * 1000,
     refresh_token: (data["refresh_token"] as string) ?? creds.refresh_token,
   };
 
-  // Persist back so the Gemini CLI also sees the refreshed token.
+  // Persist back so the Gemini CLI also picks up the refreshed token.
   await fs.promises.writeFile(
     GEMINI_CLI_CREDS_PATH,
     JSON.stringify(updated, null, 2),
@@ -211,12 +216,53 @@ async function refreshOAuthToken(creds: OAuthCreds): Promise<OAuthCreds> {
   return updated;
 }
 
+// ─── Code Assist project ID ───────────────────────────────────────────────────
+// Fetched once per process via :loadCodeAssist and cached in memory.
+
+let cachedCodeAssistProject: string | null | undefined = undefined;
+
+async function getCodeAssistProject(accessToken: string): Promise<string | null> {
+  if (cachedCodeAssistProject !== undefined) return cachedCodeAssistProject;
+
+  try {
+    const resp = await fetch(
+      `${CODE_ASSIST_BASE}/${CODE_ASSIST_VERSION}:loadCodeAssist`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({}),
+      }
+    );
+    if (!resp.ok) {
+      cachedCodeAssistProject = null;
+      return null;
+    }
+    const data = (await resp.json()) as CodeAssistLoadResponse;
+    cachedCodeAssistProject = data.cloudaicompanionProject ?? null;
+    logger.info(
+      `Code Assist project: ${cachedCodeAssistProject ?? "(none — using personal tier)"}`
+    );
+  } catch {
+    cachedCodeAssistProject = null;
+  }
+  return cachedCodeAssistProject;
+}
+
+// Strip markdown code fences that thinking models sometimes wrap JSON in.
+function extractJson(text: string): string {
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  return fenced ? fenced[1].trim() : text.trim();
+}
+
 // ─── GeminiClient ─────────────────────────────────────────────────────────────
 
 export class GeminiClient {
   private readonly apiKey: string | undefined;
   private readonly modelName: string;
-  // In-memory token cache — avoids hitting disk on every API call.
+  // In-memory token cache.
   private cachedAccessToken: string | null = null;
   private tokenExpiry = 0;
 
@@ -235,18 +281,14 @@ export class GeminiClient {
   async call(options: GeminiCallOptions): Promise<GeminiResponse> {
     return this.apiKey
       ? this.callWithApiKey(options)
-      : this.callWithOAuth(options);
+      : this.callWithCodeAssist(options);
   }
 
   // ── API-key path (Google Generative AI SDK) ───────────────────────────────
 
-  private async callWithApiKey(
-    options: GeminiCallOptions
-  ): Promise<GeminiResponse> {
+  private async callWithApiKey(options: GeminiCallOptions): Promise<GeminiResponse> {
     const genAI = new GoogleGenerativeAI(this.apiKey as string);
-    const modelConfig: Parameters<
-      GoogleGenerativeAI["getGenerativeModel"]
-    >[0] = {
+    const modelConfig: Parameters<GoogleGenerativeAI["getGenerativeModel"]>[0] = {
       model: this.modelName,
       systemInstruction: options.systemPrompt,
       generationConfig: {
@@ -285,8 +327,7 @@ export class GeminiClient {
         usageMetadata: response.usageMetadata
           ? {
               promptTokenCount: response.usageMetadata.promptTokenCount ?? 0,
-              candidatesTokenCount:
-                response.usageMetadata.candidatesTokenCount ?? 0,
+              candidatesTokenCount: response.usageMetadata.candidatesTokenCount ?? 0,
               totalTokenCount: response.usageMetadata.totalTokenCount ?? 0,
             }
           : undefined,
@@ -312,13 +353,14 @@ export class GeminiClient {
     }
   }
 
-  // ── OAuth path (raw fetch, no SDK dependency) ─────────────────────────────
+  // ── Code Assist path (Gemini CLI subscription) ────────────────────────────
+  // Routes through cloudcode-pa.googleapis.com which accepts cloud-platform
+  // OAuth scope — the same scope the Gemini CLI already has.
 
   private async getAccessToken(): Promise<string> {
     if (this.cachedAccessToken && Date.now() < this.tokenExpiry - 60_000) {
       return this.cachedAccessToken;
     }
-
     let creds = await readOAuthCreds();
     if (!creds) {
       throw new Error(
@@ -329,13 +371,12 @@ export class GeminiClient {
     if (Date.now() >= creds.expiry_date - 60_000) {
       creds = await refreshOAuthToken(creds);
     }
-
     this.cachedAccessToken = creds.access_token;
     this.tokenExpiry = creds.expiry_date;
     return creds.access_token;
   }
 
-  private async callWithOAuth(
+  private async callWithCodeAssist(
     options: GeminiCallOptions,
     attempt = 0,
     forceRefresh = false
@@ -346,9 +387,9 @@ export class GeminiClient {
     }
 
     const accessToken = await this.getAccessToken();
-    const url = `${GEMINI_API_BASE}/models/${this.modelName}:generateContent`;
+    const project = await getCodeAssistProject(accessToken);
 
-    const requestBody: Record<string, unknown> = {
+    const vertexRequest: VertexGenerateContentRequest = {
       contents: [{ role: "user", parts: [{ text: options.userPrompt }] }],
       systemInstruction: { parts: [{ text: options.systemPrompt }] },
       generationConfig: {
@@ -359,35 +400,42 @@ export class GeminiClient {
       },
     };
     if (options.useWebSearch) {
-      requestBody["tools"] = [{ googleSearch: {} }];
+      vertexRequest.tools = [{ googleSearch: {} }];
     }
 
-    const resp = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${accessToken}`,
-      },
-      body: JSON.stringify(requestBody),
-    });
+    const envelope: Record<string, unknown> = {
+      model: this.modelName,
+      user_prompt_id: randomUUID(),
+      request: vertexRequest,
+    };
+    if (project) envelope["project"] = project;
+
+    const resp = await fetch(
+      `${CODE_ASSIST_BASE}/${CODE_ASSIST_VERSION}:generateContent`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify(envelope),
+      }
+    );
 
     if (!resp.ok) {
       const status = resp.status;
       if (status === 401 && !forceRefresh) {
-        logger.warn("Gemini OAuth 401 — refreshing token and retrying.");
-        return this.callWithOAuth(options, attempt, true);
+        logger.warn("Code Assist 401 — refreshing token and retrying.");
+        return this.callWithCodeAssist(options, attempt, true);
       }
-      if (
-        (status === 429 || status === 503 || status === 502) &&
-        attempt < MAX_RETRIES
-      ) {
+      if ((status === 429 || status === 503 || status === 502) && attempt < MAX_RETRIES) {
         const delay = BASE_RETRY_DELAY_MS * Math.pow(2, attempt);
         logger.warn(
-          `Gemini OAuth error (${status}). Retrying in ${delay}ms ` +
+          `Code Assist error (${status}). Retrying in ${delay}ms ` +
             `(attempt ${attempt + 1}/${MAX_RETRIES})`
         );
         await sleep(delay);
-        return this.callWithOAuth(options, attempt + 1, false);
+        return this.callWithCodeAssist(options, attempt + 1, false);
       }
       const body = await resp.text();
       throw Object.assign(
@@ -396,27 +444,37 @@ export class GeminiClient {
       );
     }
 
-    const data = (await resp.json()) as GeminiRestResponse;
-    const rawText =
-      data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+    const data = (await resp.json()) as CodeAssistGenerateResponse;
+
+    // Thinking models emit a thoughtSignature alongside the actual text.
+    // We want the last part that contains real text (not an empty thought stub).
+    const parts = data.response?.candidates?.[0]?.content?.parts ?? [];
+    let rawText = "";
+    for (const part of parts) {
+      if (typeof part.text === "string" && part.text !== "") {
+        rawText = part.text;
+      }
+    }
+    // Strip markdown code fences the thinking model sometimes adds.
+    rawText = extractJson(rawText);
 
     let content: unknown;
     try {
       content = JSON.parse(rawText);
     } catch {
-      logger.warn("Gemini OAuth returned non-JSON response. Wrapping as error.");
+      logger.warn("Code Assist returned non-JSON response. Wrapping as error.");
       content = { _parse_error: true, raw: rawText };
     }
 
+    const usage = data.response?.usageMetadata;
     return {
       content,
       rawText,
-      usageMetadata: data.usageMetadata
+      usageMetadata: usage
         ? {
-            promptTokenCount: data.usageMetadata.promptTokenCount ?? 0,
-            candidatesTokenCount:
-              data.usageMetadata.candidatesTokenCount ?? 0,
-            totalTokenCount: data.usageMetadata.totalTokenCount ?? 0,
+            promptTokenCount: usage.promptTokenCount ?? 0,
+            candidatesTokenCount: usage.candidatesTokenCount ?? 0,
+            totalTokenCount: usage.totalTokenCount ?? 0,
           }
         : undefined,
     };

@@ -28,8 +28,8 @@ async function main(): Promise<void> {
 
   if (!apiKey && oauthAvailable) {
     logger.info(
-      "GEMINI_API_KEY not set — using Gemini CLI OAuth credentials. " +
-        "Model: " + (process.env.GEMINI_MODEL ?? "gemini-2.5-pro")
+      "GEMINI_API_KEY not set — using Gemini CLI OAuth credentials (Code Assist API). " +
+        "Model: " + (process.env.GEMINI_MODEL ?? "gemini-3-pro-preview")
     );
   }
 
@@ -59,7 +59,7 @@ async function main(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
-  logger.info(`Gemini MCP server started. Model: ${process.env.GEMINI_MODEL ?? (apiKey ? "gemini-1.5-pro" : "gemini-3.1-pro")}`);
+  logger.info(`Gemini MCP server started. Model: ${process.env.GEMINI_MODEL ?? (apiKey ? "gemini-1.5-pro" : "gemini-3-pro-preview")}`);
   logger.info(`Cache directory: ${process.env.CACHE_DIR ?? "./cache"}`);
 }
 
