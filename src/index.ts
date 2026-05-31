@@ -14,12 +14,26 @@ import { logger } from "./utils/logger.js";
 dotenv.config();
 
 async function main(): Promise<void> {
-  if (!process.env.GEMINI_API_KEY) {
-    logger.error("GEMINI_API_KEY is not set. Exiting.");
+  const apiKey = process.env.GEMINI_API_KEY;
+  const oauthAvailable = await GeminiClient.isOAuthAvailable();
+
+  if (!apiKey && !oauthAvailable) {
+    logger.error(
+      "No Gemini credentials found. Either set GEMINI_API_KEY in .env, " +
+        "or sign in with the Gemini CLI (`gemini` command) so OAuth credentials " +
+        "are stored at ~/.gemini/oauth_creds.json."
+    );
     process.exit(1);
   }
 
-  const geminiClient = new GeminiClient(process.env.GEMINI_API_KEY);
+  if (!apiKey && oauthAvailable) {
+    logger.info(
+      "GEMINI_API_KEY not set — using Gemini CLI OAuth credentials. " +
+        "Model: " + (process.env.GEMINI_MODEL ?? "gemini-2.5-pro")
+    );
+  }
+
+  const geminiClient = new GeminiClient(apiKey);
   const cacheManager = new CacheManager();
   const verifier = new StructuralVerifier();
   const sanitizer = new OutputSanitizer();
@@ -45,7 +59,7 @@ async function main(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
-  logger.info(`Gemini MCP server started. Model: ${process.env.GEMINI_MODEL ?? "gemini-3.1-pro-preview"}`);
+  logger.info(`Gemini MCP server started. Model: ${process.env.GEMINI_MODEL ?? (apiKey ? "gemini-1.5-pro" : "gemini-2.5-pro")}`);
   logger.info(`Cache directory: ${process.env.CACHE_DIR ?? "./cache"}`);
 }
 

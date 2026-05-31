@@ -1,4 +1,5 @@
-export const GEMINI_MODEL = "gemini-3.1-pro-preview";
+export const GEMINI_MODEL = "gemini-1.5-pro"; // default for API-key (free-tier) mode
+export const GEMINI_MODEL_OAUTH = "gemini-2.5-pro"; // default for OAuth (Gemini subscription) mode
 export const GEMINI_MAX_OUTPUT_TOKENS = 65536;
 export const MAX_RETRIES = 3;
 export const BASE_RETRY_DELAY_MS = 1000;
