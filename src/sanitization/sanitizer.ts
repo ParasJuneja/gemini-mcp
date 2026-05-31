@@ -25,9 +25,11 @@ export class OutputSanitizer {
 
     let sanitized = contentStr;
     for (const pattern of INJECTION_PATTERNS) {
+      pattern.lastIndex = 0; // reset stateful `g`-flag regex before each test
       if (pattern.test(sanitized)) {
         logger.warn(`Injection pattern detected in Gemini output for ${toolName}. Stripping.`);
         log.push(`Stripped injection pattern: ${pattern.source}`);
+        pattern.lastIndex = 0; // reset again before replace
         sanitized = sanitized.replace(pattern, "[REDACTED]");
       }
     }
