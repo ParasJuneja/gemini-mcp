@@ -10,7 +10,13 @@ export interface DegradationResponse {
 export class GracefulDegradationHandler {
   handle(err: unknown): DegradationResponse {
     const error = err as Record<string, unknown>;
-    const status = error?.status ?? error?.code ?? "UNKNOWN";
+    const rawStatus = error?.status ?? error?.code ?? "UNKNOWN";
+    // Normalize string numeric codes ("429") to numbers so comparisons work
+    // regardless of whether the SDK surfaces status as string or number
+    const status =
+      typeof rawStatus === "string" && /^\d+$/.test(rawStatus)
+        ? parseInt(rawStatus, 10)
+        : rawStatus;
     const message = (error?.message as string) ?? String(err);
 
     if (status === 401 || status === 403) {

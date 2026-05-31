@@ -54,11 +54,15 @@ export class StructuralVerifier {
 
     const walk = (value: unknown) => {
       if (typeof value === "string") {
-        const camelPascal = value.match(/\b[a-zA-Z][a-zA-Z0-9]{2,}\b/g) ?? [];
-        const snakeCase = value.match(/\b[a-z][a-z0-9_]{2,}\b/g) ?? [];
+        // camelCase: lowercase start + at least one uppercase inside
+        const camelCase = value.match(/\b[a-z][a-zA-Z0-9]*[A-Z][a-zA-Z0-9]*\b/g) ?? [];
+        // PascalCase: uppercase start + at least one more uppercase or a lowercase run with uppercase
+        const pascalCase = value.match(/\b[A-Z][a-z][a-zA-Z0-9]*[A-Z][a-zA-Z0-9]*\b|\b[A-Z]{2,}[a-z][a-zA-Z0-9]*\b/g) ?? [];
+        // snake_case: must contain at least one underscore
+        const snakeCase = value.match(/\b[a-z][a-z0-9]*_[a-z0-9_]+\b/g) ?? [];
         const filePaths = value.match(/\.{1,2}\/[^\s"']+/g) ?? [];
 
-        [...camelPascal, ...snakeCase, ...filePaths].forEach((id) => {
+        [...camelCase, ...pascalCase, ...snakeCase, ...filePaths].forEach((id) => {
           if (!this.isCommonWord(id)) {
             identifiers.add(id);
           }
@@ -97,16 +101,20 @@ export class StructuralVerifier {
       return summary;
     }
 
+    // Replace longer identifiers first so shorter substrings don't corrupt them
+    const sortedUnverified = [...unverified].sort((a, b) => b.length - a.length);
+    const sortedWebSourced = [...webSourced].sort((a, b) => b.length - a.length);
+
     const annotate = (value: unknown): unknown => {
       if (typeof value === "string") {
         let annotated = value;
-        for (const id of unverified) {
+        for (const id of sortedUnverified) {
           annotated = annotated.replace(
             new RegExp(`\\b${escapeRegExp(id)}\\b`, "g"),
             `${id}[UNVERIFIED]`
           );
         }
-        for (const id of webSourced) {
+        for (const id of sortedWebSourced) {
           annotated = annotated.replace(
             new RegExp(`\\b${escapeRegExp(id)}\\b`, "g"),
             `${id}[WEB_SOURCE]`
@@ -126,27 +134,28 @@ export class StructuralVerifier {
     return annotate(summary);
   }
 
+  private static readonly COMMON_WORDS = new Set([
+    "the", "and", "for", "not", "with", "this", "from", "that", "have",
+    "are", "was", "were", "been", "being", "has", "had", "will", "would",
+    "could", "should", "may", "might", "must", "can", "all", "any", "both",
+    "each", "few", "more", "most", "other", "some", "such", "than", "too",
+    "very", "just", "also", "into", "onto", "over", "under", "after",
+    "before", "between", "through", "during", "including", "without",
+    "within", "along", "following", "across", "behind", "beyond", "plus",
+    "except", "but", "up", "out", "around", "down", "off", "about",
+    "above", "below", "between", "here", "there", "when", "where", "why",
+    "how", "what", "which", "who", "whom", "whose", "whether", "while",
+    "although", "because", "since", "unless", "until", "even", "return",
+    "true", "false", "null", "undefined", "string", "number", "boolean",
+    "object", "array", "function", "class", "interface", "type", "const",
+    "let", "var", "import", "export", "default", "from", "async", "await",
+    "new", "delete", "typeof", "instanceof", "void", "throw", "catch",
+    "finally", "else", "switch", "case", "break", "continue", "pass",
+    "None", "True", "False", "self", "super", "extends", "implements",
+  ]);
+
   private isCommonWord(word: string): boolean {
-    const common = new Set([
-      "the", "and", "for", "not", "with", "this", "from", "that", "have",
-      "are", "was", "were", "been", "being", "has", "had", "will", "would",
-      "could", "should", "may", "might", "must", "can", "all", "any", "both",
-      "each", "few", "more", "most", "other", "some", "such", "than", "too",
-      "very", "just", "also", "into", "onto", "over", "under", "after",
-      "before", "between", "through", "during", "including", "without",
-      "within", "along", "following", "across", "behind", "beyond", "plus",
-      "except", "but", "up", "out", "around", "down", "off", "about",
-      "above", "below", "between", "here", "there", "when", "where", "why",
-      "how", "what", "which", "who", "whom", "whose", "whether", "while",
-      "although", "because", "since", "unless", "until", "even", "return",
-      "true", "false", "null", "undefined", "string", "number", "boolean",
-      "object", "array", "function", "class", "interface", "type", "const",
-      "let", "var", "import", "export", "default", "from", "async", "await",
-      "new", "delete", "typeof", "instanceof", "void", "throw", "catch",
-      "finally", "else", "switch", "case", "break", "continue", "pass",
-      "None", "True", "False", "self", "super", "extends", "implements",
-    ]);
-    return common.has(word.toLowerCase());
+    return StructuralVerifier.COMMON_WORDS.has(word.toLowerCase());
   }
 }
 
