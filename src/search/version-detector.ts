@@ -40,7 +40,7 @@ function parsePackageJson(content: string, source: string): VersionSignal[] {
     };
 
     for (const [name, versionSpec] of Object.entries(allDeps ?? {})) {
-      const version = String(versionSpec).replace(/^[\^~>=<]/, "");
+      const version = String(versionSpec).replace(/^[^0-9]*/, "");
       const estimatedDate = estimateNpmReleaseDate(name, version);
       if (estimatedDate) {
         signals.push({ packageName: name, version, source, estimatedReleaseDate: estimatedDate });
@@ -85,20 +85,20 @@ function parseCargoToml(content: string, source: string): VersionSignal[] {
  * Returns null if the version is clearly pre-cutoff.
  * Gemini knowledge cutoff is February 2026. Flag anything that might be post-Jan 2026.
  */
-function estimateNpmReleaseDate(name: string, version: string): Date | null {
-  const POST_CUTOFF_SIGNALS: Record<string, string> = {
-    "react": "20",
-    "next": "16",
-    "vue": "4",
-    "angular": "20",
-    "typescript": "5.9",
-    "vite": "7",
-    "tailwindcss": "4.1",
-    "prisma": "7",
-    "drizzle-orm": "1",
-    "trpc": "12",
-  };
+const POST_CUTOFF_SIGNALS: Record<string, string> = {
+  "react": "20",
+  "next": "16",
+  "vue": "4",
+  "angular": "20",
+  "typescript": "5.9",
+  "vite": "7",
+  "tailwindcss": "4.1",
+  "prisma": "7",
+  "drizzle-orm": "1",
+  "trpc": "12",
+};
 
+function estimateNpmReleaseDate(name: string, version: string): Date | null {
   const threshold = POST_CUTOFF_SIGNALS[name];
   if (!threshold) return null;
 

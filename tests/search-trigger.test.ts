@@ -47,10 +47,15 @@ describe("detectVersionSignals", () => {
     expect(names).toContain("vite");
   });
 
-  it("strips semver range prefixes (^, ~, >=) before comparing versions", () => {
-    const pkg = JSON.stringify({
-      dependencies: { react: "^20.0.0" },
-    });
+  it("strips single-char semver prefixes (^, ~) before comparing versions", () => {
+    const pkg = JSON.stringify({ dependencies: { react: "^20.0.0" } });
+    const result = detectVersionSignals(new Map([["package.json", pkg]]));
+    expect(result).toHaveLength(1);
+    expect(result[0].version).toBe("20.0.0");
+  });
+
+  it("strips multi-char range prefixes (>=) before comparing versions", () => {
+    const pkg = JSON.stringify({ dependencies: { react: ">=20.0.0" } });
     const result = detectVersionSignals(new Map([["package.json", pkg]]));
     expect(result).toHaveLength(1);
     expect(result[0].version).toBe("20.0.0");
