@@ -3,3 +3,4 @@ dist/
 /cache/
 .env
 *.js.map
+.DS_Store
