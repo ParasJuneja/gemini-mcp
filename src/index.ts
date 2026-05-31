@@ -59,7 +59,7 @@ async function main(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
-  logger.info(`Gemini MCP server started. Model: ${process.env.GEMINI_MODEL ?? (apiKey ? "gemini-1.5-pro" : "gemini-2.5-pro")}`);
+  logger.info(`Gemini MCP server started. Model: ${process.env.GEMINI_MODEL ?? (apiKey ? "gemini-1.5-pro" : "gemini-3.1-pro")}`);
   logger.info(`Cache directory: ${process.env.CACHE_DIR ?? "./cache"}`);
 }
 
