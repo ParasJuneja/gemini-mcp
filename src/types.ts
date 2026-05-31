@@ -4,7 +4,7 @@ import type { StructuralVerifier } from "./verification/verifier.js";
 import type { OutputSanitizer } from "./sanitization/sanitizer.js";
 import type { WebSearchTrigger } from "./search/trigger.js";
 import type { GracefulDegradationHandler } from "./degradation/handler.js";
-import type { SchemaCostMonitor } from "./monitoring/schema-cost.js";
+import { SchemaCostMonitor } from "./monitoring/schema-cost.js";
 
 export interface ToolDependencies {
   geminiClient: GeminiClient;
