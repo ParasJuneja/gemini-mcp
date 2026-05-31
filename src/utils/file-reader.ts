@@ -76,7 +76,10 @@ export async function readFiles(
     }
 
     if (stat.isFile()) {
-      allFilePaths.push(resolvedPath);
+      const basename = path.basename(resolvedPath);
+      if (!defaultIg.ignores(basename) && !extraIg.ignores(basename)) {
+        allFilePaths.push(resolvedPath);
+      }
     } else if (stat.isDirectory()) {
       const rootDir = resolvedPath;
       const dirIg = await loadGitignore(rootDir);
