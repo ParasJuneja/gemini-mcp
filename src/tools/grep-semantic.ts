@@ -32,12 +32,14 @@ export const grepSemanticTool = {
       max_results?: number;
     };
 
-    const cached = await deps.cacheManager.get("grep_semantic", paths, query);
+    const files = await readFiles(paths);
+    const allFilePaths = files.map((f) => f.path);
+
+    const cached = await deps.cacheManager.get("grep_semantic", allFilePaths, query);
     if (cached) {
       return { ...cached.summary as object, _cache: "hit" };
     }
 
-    const files = await readFiles(paths);
     const userPrompt = buildGrepSemanticPrompt(files, query, max_results);
 
     const response = await deps.geminiClient.call({
@@ -47,8 +49,6 @@ export const grepSemanticTool = {
       useWebSearch: false,
       temperature: 0,
     });
-
-    const allFilePaths = files.map((f) => f.path);
     const verified = await deps.verifier.verify(response.content, allFilePaths);
     const sanitized = deps.sanitizer.sanitize("grep_semantic", verified.annotatedSummary);
 

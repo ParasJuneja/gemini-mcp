@@ -79,11 +79,9 @@ describe("readCodebaseTool", () => {
 
     const deps = makeDeps(cacheDir, MOCK_SUMMARY);
 
-    // Use individual file paths so get/set use the same hash key
-    const paths = [
-      path.join(dir, "index.ts"),
-      path.join(dir, "utils.ts"),
-    ];
+    // Use directory paths (the natural usage) — the tool expands to individual
+    // file paths internally and uses them consistently for both get() and set()
+    const paths = [dir];
 
     // First call — hits Gemini
     await readCodebaseTool.handler(

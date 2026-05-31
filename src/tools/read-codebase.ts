@@ -39,14 +39,20 @@ export const readCodebaseTool = {
       exclude_patterns?: string[];
     };
 
-    const cached = await deps.cacheManager.get("read_codebase", paths, focus_query);
-    if (cached) {
-      return { ...cached.summary as object, _cache: "hit" };
-    }
-
+    // Read files first so we have individual file paths for the cache key.
+    // Using directory paths for get() but file paths for set() produces different
+    // hashes, so the cache would always miss. Individual paths also enable per-file
+    // mtime tracking.
     const files = await readFiles(paths, exclude_patterns);
     if (files.length === 0) {
       return { error: "No readable files found at the specified paths." };
+    }
+
+    const allFilePaths = files.map((f) => f.path);
+
+    const cached = await deps.cacheManager.get("read_codebase", allFilePaths, focus_query);
+    if (cached) {
+      return { ...cached.summary as object, _cache: "hit" };
     }
 
     const fileMap = new Map(files.map((f) => [f.path, f.content]));
@@ -61,8 +67,6 @@ export const readCodebaseTool = {
       useWebSearch: searchContext.shouldSearch,
       temperature: 0,
     });
-
-    const allFilePaths = files.map((f) => f.path);
     const verificationResult = await deps.verifier.verify(response.content, allFilePaths);
     const sanitized = deps.sanitizer.sanitize("read_codebase", verificationResult.annotatedSummary);
 
