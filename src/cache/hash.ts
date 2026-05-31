@@ -6,7 +6,7 @@ export function computeProjectHash(
   focusQuery?: string
 ): string {
   const normalized = paths
-    .map((p) => p.replace(/\\/g, "/").toLowerCase())
+    .map((p) => p.replace(/\\/g, "/"))
     .sort()
     .join("|");
 

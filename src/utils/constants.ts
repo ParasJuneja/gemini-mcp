@@ -1,4 +1,4 @@
-export const GEMINI_MODEL = "gemini-2.0-flash-exp";
+export const GEMINI_MODEL = "gemini-3.1-pro-preview";
 export const GEMINI_MAX_OUTPUT_TOKENS = 65536;
 export const MAX_RETRIES = 3;
 export const BASE_RETRY_DELAY_MS = 1000;

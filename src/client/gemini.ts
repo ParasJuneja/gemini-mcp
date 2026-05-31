@@ -8,7 +8,7 @@ import { GEMINI_MODEL, GEMINI_MAX_OUTPUT_TOKENS, MAX_RETRIES, BASE_RETRY_DELAY_M
 export interface GeminiCallOptions {
   systemPrompt: string;
   userPrompt: string;
-  responseSchema?: object;
+  responseSchema: object;
   useWebSearch?: boolean;
   temperature?: number;
 }
